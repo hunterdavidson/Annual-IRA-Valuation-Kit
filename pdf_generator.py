@@ -7,24 +7,50 @@ from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 import os
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-# Configuration Parameters
-EXCEL_FILE = "input_data.xlsx"
-OUTPUT_DIR = "output_pdfs"
-SINGLE_OUTPUT_DIR = "single_output"
-SIGNATURE_IMAGE_PATH = "signature.png"
+# Determine the directory of the executable (the .exe file)
+BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+
+EXCEL_FILE = os.path.join(BASE_DIR, "input_data.xlsx")
+SIGNATURE_IMAGE_PATH = os.path.join(BASE_DIR, "signature.png")
+OUTPUT_DIR = os.path.join(BASE_DIR, "output_pdfs")
+SINGLE_OUTPUT_DIR = os.path.join(BASE_DIR, "single_output")
+
+print("BASE_DIR:", BASE_DIR)
+print("EXCEL_FILE:", EXCEL_FILE)
+print("SIGNATURE_IMAGE_PATH:", SIGNATURE_IMAGE_PATH)
+
+# Verify required files exist
+if not os.path.exists(EXCEL_FILE):
+    print(f"Error: Excel file not found at {EXCEL_FILE}")
+    sys.exit(1)
+
+if not os.path.exists(SIGNATURE_IMAGE_PATH):
+    print(f"Error: Signature image not found at {SIGNATURE_IMAGE_PATH}")
+    sys.exit(1)
+
+# Clean up old directories if they exist
+try:
+    shutil.rmtree(OUTPUT_DIR)
+except FileNotFoundError:
+    pass
+
+# Create output directories
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(SINGLE_OUTPUT_DIR, exist_ok=True)
 
 try:
     shutil.rmtree(OUTPUT_DIR)
-except:
+except FileNotFoundError:
     print("No output directory to remove")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(SINGLE_OUTPUT_DIR, exist_ok=True)
 
-signature_path = f"file:\\{os.path.abspath(SIGNATURE_IMAGE_PATH)}"
+signature_path = f"file://{os.path.abspath(SIGNATURE_IMAGE_PATH)}"
 
 # HTML Template
 html_template = """
@@ -289,30 +315,25 @@ def merge_pdfs(original_pdf_path, overlay_pdf_path, final_pdf_path):
 
 def show_progress(total):
     """Create a small progress window for PDF generation with consistent theme colors."""
-    # Create the progress window
     progress_win = tk.Toplevel()
     progress_win.title("Generating PDFs...")
     progress_win.geometry("300x120")
     progress_win.resizable(False, False)
-    progress_win.configure(bg="#FCF7F8")  # Set background color
+    progress_win.configure(bg="#FCF7F8")
 
-    # Configure styles for labels and progress bar
     style = ttk.Style(progress_win)
     style.theme_use("clam")
     style.configure("TLabel", background="#FCF7F8", foreground="black", font=("Arial", 12))
     style.configure("TProgressbar", background="#A9A9A9", troughcolor="#FCF7F8", thickness=10)
 
-    # Add components to the progress window
     ttk.Label(progress_win, text="Generating PDFs, please wait...").pack(pady=10)
     pbar = ttk.Progressbar(progress_win, orient='horizontal', length=200, mode='determinate', style="TProgressbar")
     pbar.pack(pady=5)
     count_label = ttk.Label(progress_win, text="0 / {0}".format(total))
     count_label.pack()
 
-    # Ensure the window is updated and displayed
     progress_win.update()
     return progress_win, pbar, count_label
-
 
 def generate_all_pdfs(data, aux_data):
     if data.empty:
@@ -363,7 +384,6 @@ def generate_all_pdfs(data, aux_data):
         else:
             os.rename(intermediate_pdf, final_pdf)
 
-        # Update progress
         current_count += 1
         pbar['value'] = current_count
         count_label.config(text=f"{current_count} / {total_count}")
@@ -556,7 +576,6 @@ def run_gui(data, aux_data):
     fund_cb.bind("<<ComboboxSelected>>", on_fund_select)
 
     root.mainloop()
-
 
 def main():
     data = read_excel_data(EXCEL_FILE)
