@@ -7,19 +7,22 @@ from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 import os
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 # Configuration Parameters
 EXCEL_FILE = "input_data.xlsx"
 OUTPUT_DIR = "output_pdfs"
+SINGLE_OUTPUT_DIR = "single_output"
+SIGNATURE_IMAGE_PATH = "signature.png"
 
 try:
     shutil.rmtree(OUTPUT_DIR)
-
 except:
     print("No output directory to remove")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-SIGNATURE_IMAGE_PATH = "signature.png"
+os.makedirs(SINGLE_OUTPUT_DIR, exist_ok=True)
 
 signature_path = f"file:\\{os.path.abspath(SIGNATURE_IMAGE_PATH)}"
 
@@ -37,7 +40,7 @@ html_template = """
             width: 100%;
             margin: 0;
             padding: 0;
-            }
+        }
         h1 {
             font-size: 20px;
         }
@@ -136,7 +139,6 @@ html_template = """
         .page-number::after {
             content: counter(page);
         }
-
         .total-pages::after {
             content: counter(pages);
         }
@@ -199,64 +201,41 @@ html_template = """
 """
 
 def read_excel_data(excel_path):
-    """Reads the Excel file and returns a cleaned pandas DataFrame."""
     try:
-        # Read the Excel file
         df = pd.read_excel(excel_path, sheet_name="Pull Data")
-
-        # Replace "empty row" with blanks
         df.replace("Empty Row", "", inplace=True)
-
-        # Drop rows that are entirely empty
         df.dropna(how='all', inplace=True)
 
-        # Identify problematic rows in 'Investment Date' and 'Valuation Date'
-        invalid_dates = df[~df['Investment Date'].apply(lambda x: isinstance(x, pd.Timestamp) or pd.api.types.is_string_dtype(x))]
-
-        invalid_dates = df[~df['Valuation Date'].apply(lambda x: isinstance(x, pd.Timestamp) or pd.api.types.is_string_dtype(x))]
-
-        # Safely convert date columns to datetime, coercing invalid values to NaT
         df['Investment Date'] = pd.to_datetime(df['Investment Date'], errors='coerce')
         df['Valuation Date'] = pd.to_datetime(df['Valuation Date'], errors='coerce')
-
-        # Drop rows where required columns are missing
         df.dropna(subset=['Investment Date', 'Valuation Date'], inplace=True)
 
-        # Format dates
         df['Investment Date'] = df['Investment Date'].dt.strftime('%m/%d/%Y')
         df['Valuation Date'] = df['Valuation Date'].dt.strftime('%m/%d/%Y')
-
+        df['c/o'] = df['c/o'].fillna("")
         print(f"Successfully read {len(df)} records from {excel_path}")
         return df
     except Exception as e:
         print(f"Error reading Excel file: {e}")
         return pd.DataFrame()
 
-    
 def read_excel_aux_data(excel_path):
-    """Reads the Excel file and returns a pandas DataFrame in the Master Table Sheet."""
     try:
         df = pd.read_excel(excel_path, sheet_name="Master Table")
         return df
-    
     except Exception as e:
         print(f"Error reading Excel file: {e}")
         return pd.DataFrame()
 
 def sanitize_file_name(file_name, max_length=200):
-    """
-    Sanitizes file name by removing invalid characters and truncating if necessary.
-    """
     invalid_chars = '<>:"/\\|?*'
     for char in invalid_chars:
         file_name = file_name.replace(char, '')
-    # Truncate the file name if it exceeds the max_length
     if len(file_name) > max_length:
         file_name = file_name[:max_length]
     return file_name
 
 def render_html(template_str, group_data, custodian, fund, care_of, address1, address2, printed_name, title, phone, fax, email, company_address):
-    """Renders the HTML template with provided data."""
     template = Template(template_str)
     current_date = datetime.now().strftime("%B %d, %Y")
     rendered = template.render(
@@ -277,9 +256,7 @@ def render_html(template_str, group_data, custodian, fund, care_of, address1, ad
     )
     return rendered
 
-
 def html_to_pdf(html_content, output_pdf_path):
-    """Converts HTML content to a PDF file using WeasyPrint."""
     try:
         HTML(string=html_content).write_pdf(output_pdf_path)
         print(f"PDF successfully created at {output_pdf_path}")
@@ -287,63 +264,74 @@ def html_to_pdf(html_content, output_pdf_path):
         print(f"Error generating PDF: {e}")
 
 def create_notification_overlay(output_path, num_pages):
-    """
-    Creates a PDF overlay with a notification for all pages except the last page.
-    """
     c = canvas.Canvas(output_path, pagesize=letter)
-    width, height = letter
-
     for page_number in range(1, num_pages):
-        # Add the notification text to all pages except the last
         c.drawString(30, 15, "Signature is on the last page.")
-        c.showPage()  # Move to the next page
+        c.showPage()
 
-    # Close the canvas
     c.save()
     print(f"Notification overlay created at {output_path}")
 
 def merge_pdfs(original_pdf_path, overlay_pdf_path, final_pdf_path):
-    """
-    Merges the original PDF with the notification overlay PDF using PyPDF2.
-    """
     original = PdfReader(original_pdf_path)
     overlay = PdfReader(overlay_pdf_path)
     writer = PdfWriter()
 
     for i, page in enumerate(original.pages):
-        # Only add overlay to pages before the last
         if i < len(original.pages) - 1:
             page.merge_page(overlay.pages[i])
         writer.add_page(page)
 
-    # Save the merged PDF
     with open(final_pdf_path, "wb") as out_file:
         writer.write(out_file)
 
     print(f"Final PDF with notifications saved at {final_pdf_path}")
 
+def show_progress(total):
+    """Create a small progress window for PDF generation with consistent theme colors."""
+    # Create the progress window
+    progress_win = tk.Toplevel()
+    progress_win.title("Generating PDFs...")
+    progress_win.geometry("300x120")
+    progress_win.resizable(False, False)
+    progress_win.configure(bg="#FCF7F8")  # Set background color
 
-def main():
-    data = read_excel_data(EXCEL_FILE)
-    aux_data = read_excel_aux_data(EXCEL_FILE)
+    # Configure styles for labels and progress bar
+    style = ttk.Style(progress_win)
+    style.theme_use("clam")
+    style.configure("TLabel", background="#FCF7F8", foreground="black", font=("Arial", 12))
+    style.configure("TProgressbar", background="#A9A9A9", troughcolor="#FCF7F8", thickness=10)
 
+    # Add components to the progress window
+    ttk.Label(progress_win, text="Generating PDFs, please wait...").pack(pady=10)
+    pbar = ttk.Progressbar(progress_win, orient='horizontal', length=200, mode='determinate', style="TProgressbar")
+    pbar.pack(pady=5)
+    count_label = ttk.Label(progress_win, text="0 / {0}".format(total))
+    count_label.pack()
+
+    # Ensure the window is updated and displayed
+    progress_win.update()
+    return progress_win, pbar, count_label
+
+
+def generate_all_pdfs(data, aux_data):
     if data.empty:
         print("No data to process. Exiting.")
         return
 
-    # Replace NaN or missing values in 'c/o' with a placeholder string
-    data['c/o'] = data['c/o'].fillna("")
-
     printed_name, title, company_address, phone, fax, email = aux_data.iloc[0, 0:6]
-
-    # Group by 'c/o', 'Custodian', and 'Fund'
     grouped = data.groupby(['c/o', 'Custodian', 'Fund'])
+
+    total_count = len(grouped)
+    progress_win, pbar, count_label = show_progress(total_count)
+
+    pbar['maximum'] = total_count
+    current_count = 0
 
     for (care_of, custodian, fund), group in grouped:
         address1 = group.iloc[0]['Street Name']
         address2 = group.iloc[0]['City, State, Zip']
 
-        # Construct sanitized output file names
         sanitized_care_of = sanitize_file_name(care_of.replace(' ', '_'))
         sanitized_fund = sanitize_file_name(fund.replace(' ', '_'))
         sanitized_custodian = sanitize_file_name(custodian.replace(' ', '_'))
@@ -361,28 +349,219 @@ def main():
             f"{sanitized_fund}_{sanitized_custodian}_{sanitized_care_of}_overlay.pdf"
         )
 
-        # Render and generate the intermediate PDF
         rendered_html = render_html(html_template, group, custodian, fund, care_of, address1, address2, printed_name, title, phone, fax, email, company_address)
         html_to_pdf(rendered_html, intermediate_pdf)
 
-        # Get the number of pages in the generated PDF
         reader = PdfReader(intermediate_pdf)
         num_pages = len(reader.pages)
 
         if num_pages > 1:
-            # Create a notification overlay if there are multiple pages
             create_notification_overlay(overlay_pdf, num_pages)
-            # Merge the overlay with the original PDF
             merge_pdfs(intermediate_pdf, overlay_pdf, final_pdf)
-            # Clean up temporary files
             os.remove(intermediate_pdf)
             os.remove(overlay_pdf)
         else:
-            # If there's only one page, just rename the intermediate PDF to final
             os.rename(intermediate_pdf, final_pdf)
 
+        # Update progress
+        current_count += 1
+        pbar['value'] = current_count
+        count_label.config(text=f"{current_count} / {total_count}")
+        progress_win.update()
+
+    progress_win.destroy()
     print("All PDFs have been successfully created.")
 
+def generate_single_pdf(data, aux_data, custodian, fund, care_of):
+    printed_name, title, company_address, phone, fax, email = aux_data.iloc[0, 0:6]
+
+    filtered = data[(data['Custodian'] == custodian) & (data['Fund'] == fund) & (data['c/o'] == care_of)]
+
+    if filtered.empty:
+        print("No matching data found. Cannot generate single PDF.")
+        return
+
+    address1 = filtered.iloc[0]['Street Name']
+    address2 = filtered.iloc[0]['City, State, Zip']
+
+    sanitized_care_of = sanitize_file_name(care_of.replace(' ', '_'))
+    sanitized_fund = sanitize_file_name(fund.replace(' ', '_'))
+    sanitized_custodian = sanitize_file_name(custodian.replace(' ', '_'))
+
+    intermediate_pdf = os.path.join(
+        SINGLE_OUTPUT_DIR,
+        f"{sanitized_fund}_{sanitized_custodian}_{sanitized_care_of}_intermediate.pdf"
+    )
+    final_pdf = os.path.join(
+        SINGLE_OUTPUT_DIR,
+        f"{sanitized_fund}_{sanitized_custodian}_{sanitized_care_of}.pdf"
+    )
+    overlay_pdf = os.path.join(
+        SINGLE_OUTPUT_DIR,
+        f"{sanitized_fund}_{sanitized_custodian}_{sanitized_care_of}_overlay.pdf"
+    )
+
+    rendered_html = render_html(html_template, filtered, custodian, fund, care_of, address1, address2, printed_name, title, phone, fax, email, company_address)
+    html_to_pdf(rendered_html, intermediate_pdf)
+
+    reader = PdfReader(intermediate_pdf)
+    num_pages = len(reader.pages)
+
+    if num_pages > 1:
+        create_notification_overlay(overlay_pdf, num_pages)
+        merge_pdfs(intermediate_pdf, overlay_pdf, final_pdf)
+        os.remove(intermediate_pdf)
+        os.remove(overlay_pdf)
+    else:
+        os.rename(intermediate_pdf, final_pdf)
+
+    print("Single PDF has been successfully created.")
+
+def run_gui(data, aux_data):
+    grouped = data.groupby(['Custodian', 'Fund', 'c/o']).size().reset_index().drop(columns=0)
+    custodians = sorted(grouped['Custodian'].unique().tolist())
+
+    def enable_combobox(cb, enable=True):
+        style_name = "Large.TCombobox" if enable else "LargeDisabled.TCombobox"
+        cb.configure(state="readonly" if enable else "disabled", style=style_name)
+
+    def on_generate_all():
+        generate_all_pdfs(data, aux_data)
+        messagebox.showinfo("Success", "All PDFs generated successfully.")
+
+    def on_custodian_select(event):
+        selected_cust = custodian_cb.get()
+        if selected_cust == "Select a Custodian":
+            return
+        fund_options = sorted(grouped[grouped['Custodian'] == selected_cust]['Fund'].unique().tolist())
+        fund_cb['values'] = fund_options
+        fund_cb.set("Select a Fund")
+
+        co_cb.set("Select c/o")
+        co_cb['values'] = []
+        enable_combobox(co_cb, enable=False)
+
+    def on_fund_select(event):
+        selected_cust = custodian_cb.get()
+        selected_fund = fund_cb.get()
+        if selected_fund == "Select a Fund":
+            return
+        co_options = grouped[(grouped['Custodian'] == selected_cust) & (grouped['Fund'] == selected_fund)]['c/o'].unique().tolist()
+        co_options = sorted(co_options)
+
+        if len(co_options) == 0:
+            co_cb.set("No c/o available")
+            co_cb['values'] = []
+            enable_combobox(co_cb, enable=False)
+        elif len(co_options) == 1 and co_options[0] == "":
+            co_cb.set("No c/o required")
+            co_cb['values'] = []
+            enable_combobox(co_cb, enable=False)
+        else:
+            if "" in co_options:
+                display_options = ["None"] + [c for c in co_options if c != ""]
+            else:
+                display_options = co_options
+
+            co_cb['values'] = display_options
+            co_cb.set("Select c/o")
+            enable_combobox(co_cb, enable=True)
+
+    def on_generate_single():
+        selected_cust = custodian_cb.get()
+        selected_fund = fund_cb.get()
+        selected_co = co_cb.get()
+
+        if selected_cust == "Select a Custodian" or not selected_cust:
+            messagebox.showerror("Error", "Please select a Custodian.")
+            return
+        if selected_fund == "Select a Fund" or not selected_fund:
+            messagebox.showerror("Error", "Please select a Fund.")
+            return
+
+        filtered_co_options = grouped[(grouped['Custodian'] == selected_cust) & (grouped['Fund'] == selected_fund)]['c/o'].unique().tolist()
+
+        if len(filtered_co_options) > 1:
+            if selected_co == "Select c/o":
+                messagebox.showerror("Error", "Please select a c/o option.")
+                return
+            if selected_co == "None":
+                chosen_co = ""
+            else:
+                chosen_co = selected_co
+        else:
+            chosen_co = filtered_co_options[0] if len(filtered_co_options) == 1 else ""
+
+        generate_single_pdf(data, aux_data, selected_cust, selected_fund, chosen_co)
+        messagebox.showinfo("Success", "Single PDF generated successfully.")
+
+    # Colors and styling
+    bg_color = "#FCF7F8"
+    label_color = "black"
+    button_color = "#A9A9A9"  # Grey color
+    font_size = ("Arial", 16)
+
+    root = tk.Tk()
+    root.title("PDF Generator")
+    root.configure(bg=bg_color)
+    root.geometry("600x400")
+    root.resizable(False, False)
+
+    style = ttk.Style(root)
+    style.theme_use("clam")
+
+    style.configure("TButton", background=button_color, foreground=label_color, padding=5, font=font_size)
+    style.configure("TLabel", background=bg_color, foreground=label_color, font=font_size, anchor="center")
+    style.configure("TFrame", background=bg_color)
+    style.configure("Large.TCombobox", fieldbackground="white", background="white", foreground=label_color, font=font_size, padding=(10, 5, 10, 5))
+    style.configure("LargeDisabled.TCombobox", fieldbackground="lightgrey", background="lightgrey", foreground="black", font=font_size, padding=(10, 5, 10, 5))
+
+    frame = ttk.Frame(root, padding=10)
+    frame.pack(fill="both", expand=True)
+
+    frame.columnconfigure(0, weight=1)
+    frame.columnconfigure(1, weight=1)
+
+    lbl_info = ttk.Label(frame, text="PDF Generator")
+    lbl_info.grid(row=0, column=0, columnspan=2, pady=10, sticky="ew")
+
+    btn_all = ttk.Button(frame, text="Generate All PDFs", command=on_generate_all)
+    btn_all.grid(row=1, column=0, columnspan=2, padx=5, pady=10, sticky="ew")
+
+    line_frame = tk.Frame(frame, bg=label_color, width=550, height=2)
+    line_frame.grid(row=2, column=0, columnspan=2, pady=10)
+
+    lbl_custodian = ttk.Label(frame, text="Custodian:")
+    lbl_custodian.grid(row=3, column=0, padx=5, pady=10, sticky="e")
+    custodian_cb = ttk.Combobox(frame, values=custodians, state="readonly", style="Large.TCombobox", width=40)
+    custodian_cb.set("Select a Custodian")
+    custodian_cb.grid(row=3, column=1, padx=5, pady=10, sticky="w")
+
+    lbl_fund = ttk.Label(frame, text="Fund:")
+    lbl_fund.grid(row=4, column=0, padx=5, pady=10, sticky="e")
+    fund_cb = ttk.Combobox(frame, values=[], state="readonly", style="Large.TCombobox", width=40)
+    fund_cb.set("Select a Fund")
+    fund_cb.grid(row=4, column=1, padx=5, pady=10, sticky="w")
+
+    lbl_co = ttk.Label(frame, text="c/o:")
+    lbl_co.grid(row=5, column=0, padx=5, pady=10, sticky="e")
+    co_cb = ttk.Combobox(frame, values=[], state="disabled", style="LargeDisabled.TCombobox", width=40)
+    co_cb.set("Select c/o")
+    co_cb.grid(row=5, column=1, padx=5, pady=10, sticky="w")
+
+    btn_single = ttk.Button(frame, text="Generate Single PDF", command=on_generate_single)
+    btn_single.grid(row=6, column=0, columnspan=2, padx=5, pady=20, sticky="ew")
+
+    custodian_cb.bind("<<ComboboxSelected>>", on_custodian_select)
+    fund_cb.bind("<<ComboboxSelected>>", on_fund_select)
+
+    root.mainloop()
+
+
+def main():
+    data = read_excel_data(EXCEL_FILE)
+    aux_data = read_excel_aux_data(EXCEL_FILE)
+    run_gui(data, aux_data)
 
 if __name__ == "__main__":
     main()
