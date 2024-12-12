@@ -10,8 +10,11 @@ import os
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
+import locale
+import base64
 
-# Determine the directory of the executable (the .exe file)
+locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+
 BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
 
 EXCEL_FILE = os.path.join(BASE_DIR, "input_data.xlsx")
@@ -24,33 +27,21 @@ print("EXCEL_FILE:", EXCEL_FILE)
 print("SIGNATURE_IMAGE_PATH:", SIGNATURE_IMAGE_PATH)
 
 # Verify required files exist
-if not os.path.exists(EXCEL_FILE):
+if not os.path.isfile(EXCEL_FILE):
     print(f"Error: Excel file not found at {EXCEL_FILE}")
     sys.exit(1)
 
-if not os.path.exists(SIGNATURE_IMAGE_PATH):
+if not os.path.isfile(SIGNATURE_IMAGE_PATH):
     print(f"Error: Signature image not found at {SIGNATURE_IMAGE_PATH}")
     sys.exit(1)
 
-# Clean up old directories if they exist
-try:
-    shutil.rmtree(OUTPUT_DIR)
-except FileNotFoundError:
-    pass
+# Clean up and recreate output directories
+for directory in [OUTPUT_DIR, SINGLE_OUTPUT_DIR]:
+    if os.path.exists(directory):
+        shutil.rmtree(directory)
+    os.makedirs(directory, exist_ok=True)
 
-# Create output directories
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(SINGLE_OUTPUT_DIR, exist_ok=True)
-
-try:
-    shutil.rmtree(OUTPUT_DIR)
-except FileNotFoundError:
-    print("No output directory to remove")
-
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(SINGLE_OUTPUT_DIR, exist_ok=True)
-
-signature_path = f"file://{os.path.abspath(SIGNATURE_IMAGE_PATH)}"
+signature_path = os.path.abspath(SIGNATURE_IMAGE_PATH)
 
 # HTML Template
 html_template = """
@@ -219,7 +210,7 @@ html_template = """
     <div class="closing">
         <p>Please let me know if you require any other information.</p>
         <p>Sincerely,<br>
-        <img src="{{ signature }}" alt="Signature" class="signature"><br>
+        <img src="data:image/png;base64,{{ signature_base64 }}" alt="Signature" class="signature"><br>
         {{ printed_name }}<br>{{ title }}</p>
     </div>
 </body>
@@ -238,6 +229,10 @@ def read_excel_data(excel_path):
 
         df['Investment Date'] = df['Investment Date'].dt.strftime('%m/%d/%Y')
         df['Valuation Date'] = df['Valuation Date'].dt.strftime('%m/%d/%Y')
+
+        df['Investment Amount'] = df['Investment Amount'].apply(lambda x: locale.currency(x, grouping=True) if pd.notnull(x) else "")
+        df['Valuation Amount'] = df['Valuation Amount'].apply(lambda x: locale.currency(x, grouping=True) if pd.notnull(x) else "")
+
         df['c/o'] = df['c/o'].fillna("")
         print(f"Successfully read {len(df)} records from {excel_path}")
         return df
@@ -262,6 +257,7 @@ def sanitize_file_name(file_name, max_length=200):
     return file_name
 
 def render_html(template_str, group_data, custodian, fund, care_of, address1, address2, printed_name, title, phone, fax, email, company_address):
+    signature_base64 = image_to_base64(SIGNATURE_IMAGE_PATH)
     template = Template(template_str)
     current_date = datetime.now().strftime("%B %d, %Y")
     rendered = template.render(
@@ -278,16 +274,25 @@ def render_html(template_str, group_data, custodian, fund, care_of, address1, ad
         email=email,
         company_address=company_address,
         data=group_data.to_dict(orient="records"),
-        signature=signature_path,
+        signature_base64=signature_base64,
     )
     return rendered
 
 def html_to_pdf(html_content, output_pdf_path):
     try:
+        HTML(string=html_content, base_url=os.path.dirname(signature_path)).write_pdf(output_pdf_path)
+        print(f"PDF successfully created at {output_pdf_path}")
+    except Exception as e:
+        print(f"Error generating PDF: {e}")
+    try:
         HTML(string=html_content).write_pdf(output_pdf_path)
         print(f"PDF successfully created at {output_pdf_path}")
     except Exception as e:
         print(f"Error generating PDF: {e}")
+
+def image_to_base64(image_path):
+    with open(image_path, "rb") as img_file:
+        return base64.b64encode(img_file.read()).decode("utf-8")
 
 def create_notification_overlay(output_path, num_pages):
     c = canvas.Canvas(output_path, pagesize=letter)
