@@ -239,6 +239,11 @@ def read_excel_data(excel_path):
         df['Investment Date'] = df['Investment Date'].dt.strftime('%m/%d/%Y')
         df['Valuation Date'] = df['Valuation Date'].dt.strftime('%m/%d/%Y')
         df['c/o'] = df['c/o'].fillna("")
+
+        # Format Investment Amount and Valuation Amount as currency
+        df['Investment Amount'] = df['Investment Amount'].apply(lambda x: '${:,.2f}'.format(x))
+        df['Valuation Amount'] = df['Valuation Amount'].apply(lambda x: '${:,.2f}'.format(x))
+
         print(f"Successfully read {len(df)} records from {excel_path}")
         return df
     except Exception as e:
@@ -264,6 +269,10 @@ def sanitize_file_name(file_name, max_length=200):
 def render_html(template_str, group_data, custodian, fund, care_of, address1, address2, printed_name, title, phone, fax, email, company_address):
     template = Template(template_str)
     current_date = datetime.now().strftime("%B %d, %Y")
+    
+    # Just use a relative path for the signature image and set base_url later
+    signature_filename = "signature.png"
+    
     rendered = template.render(
         date=current_date,
         custodian=custodian,
@@ -278,13 +287,15 @@ def render_html(template_str, group_data, custodian, fund, care_of, address1, ad
         email=email,
         company_address=company_address,
         data=group_data.to_dict(orient="records"),
-        signature=signature_path,
+        signature=signature_filename,  # Use relative path
     )
     return rendered
 
+
 def html_to_pdf(html_content, output_pdf_path):
     try:
-        HTML(string=html_content).write_pdf(output_pdf_path)
+        # Provide the base_url so that the relative path to signature can be resolved
+        HTML(string=html_content, base_url=BASE_DIR).write_pdf(output_pdf_path)
         print(f"PDF successfully created at {output_pdf_path}")
     except Exception as e:
         print(f"Error generating PDF: {e}")
